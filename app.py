@@ -206,12 +206,15 @@ if uploaded:
 # ── Main chart ────────────────────────────────────────────────────────────────
 fig = go.Figure()
 
+# Mileage bars on primary y-axis
 fig.add_trace(go.Bar(
     x=months, y=mileage, name="Monthly miles",
     marker_color="rgba(252, 82, 0, 0.75)",
+    yaxis="y1",
     hovertemplate="%{x}<br>%{y:.1f} miles<extra></extra>",
 ))
 
+# Race stars — x = exact date, y = pace in seconds/mile on right axis
 races_by_sport = defaultdict(list)
 for race in races:
     sport = race.get("sport", "Other")
@@ -219,39 +222,72 @@ for race in races:
         sport = "Other"
     if sport not in selected_sports:
         continue
-    month = race["date"][:7]
-    if month not in filtered:
+    if race["date"][:7] not in filtered:
         continue
-    races_by_sport[sport].append(race)
+    if race.get("seconds", 0) > 0 and race.get("distance", 0) > 0:
+        races_by_sport[sport].append(race)
+
+# Collect all pace values to set a sensible y-axis range
+all_paces = []
+for sport_races in races_by_sport.values():
+    for r in sport_races:
+        all_paces.append(r["seconds"] / r["distance"])
 
 for sport, sport_races in races_by_sport.items():
     color = SPORT_COLORS[sport]
+    pace_seconds = [r["seconds"] / r["distance"] for r in sport_races]
     fig.add_trace(go.Scatter(
-        x=[r["date"][:7] for r in sport_races],
-        y=[filtered.get(r["date"][:7], 0) for r in sport_races],
-        mode="markers+text",
+        x=[r["date"] for r in sport_races],      # exact date e.g. "2023-11-04"
+        y=pace_seconds,
+        mode="markers",
         marker=dict(size=14, color=color, symbol="star"),
-        text=[r["name"] for r in sport_races],
-        textposition="top center",
         name=sport,
+        yaxis="y2",
+        text=[r["name"] for r in sport_races],
         customdata=[[r["distance"], r["time_str"],
                      pace_seconds_to_str(r["seconds"], r["distance"])]
                     for r in sport_races],
         hovertemplate=(
             "<b>%{text}</b><br>"
+            "Date: %{x}<br>"
             "%{customdata[0]} mi · %{customdata[1]}<br>"
             "Pace: %{customdata[2]}<extra></extra>"
         ),
     ))
 
+# Pace axis: faster (lower seconds) should appear at the TOP
+pace_min = min(all_paces) * 0.95 if all_paces else 0
+pace_max = max(all_paces) * 1.05 if all_paces else 600
+
+# Custom tick labels converting seconds/mile → "M:SS" strings
+import numpy as np
+tick_vals = list(np.linspace(pace_min, pace_max, 6))
+tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
+
 fig.update_layout(
-    xaxis_title="Month", yaxis_title="Miles",
+    xaxis=dict(title="Date", showgrid=False),
+    yaxis=dict(
+        title="Miles",
+        titlefont=dict(color="rgba(252, 82, 0, 0.9)"),
+        tickfont=dict(color="rgba(252, 82, 0, 0.9)"),
+        gridcolor="rgba(128,128,128,0.15)",
+    ),
+    yaxis2=dict(
+        title="Pace (min/mile)",
+        titlefont=dict(color="#444"),
+        tickfont=dict(color="#444"),
+        overlaying="y",
+        side="right",
+        range=[pace_max, pace_min],   # inverted: faster pace at top
+        tickvals=tick_vals,
+        ticktext=tick_text,
+        showgrid=False,
+    ),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-    hovermode="x unified", margin=dict(t=40, b=40), height=480,
+    hovermode="closest",
+    margin=dict(t=40, b=40), height=500,
 )
-fig.update_xaxes(showgrid=False)
-fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
 st.plotly_chart(fig, use_container_width=True)
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
