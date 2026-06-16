@@ -265,14 +265,14 @@ tick_vals = [pace_min + step * i for i in range(6)]
 tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
 
 fig.update_layout(
-    xaxis_title="Date",
-    xaxis_showgrid=False,
-    yaxis_title="Miles",
-    yaxis_gridcolor="rgba(128,128,128,0.15)",
-    yaxis_titlefont_color="rgba(252, 82, 0, 0.9)",
-    yaxis_tickfont_color="rgba(252, 82, 0, 0.9)",
+    xaxis=dict(title="Date", showgrid=False),
+    yaxis=dict(
+        title=dict(text="Miles", font=dict(color="rgba(252, 82, 0, 0.9)")),
+        tickfont=dict(color="rgba(252, 82, 0, 0.9)"),
+        gridcolor="rgba(128,128,128,0.15)",
+    ),
     yaxis2=dict(
-        title="Pace (min/mile)",
+        title=dict(text="Pace (min/mile)"),
         overlaying="y",
         side="right",
         autorange="reversed",
@@ -281,9 +281,11 @@ fig.update_layout(
         showgrid=False,
     ),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
     hovermode="closest",
-    margin=dict(t=40, b=40), height=500,
+    margin=dict(t=40, b=40),
+    height=500,
 )
 st.plotly_chart(fig, use_container_width=True)
 
