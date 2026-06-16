@@ -257,11 +257,11 @@ for sport, sport_races in races_by_sport.items():
     ))
 
 # Pace axis: faster (lower seconds) should appear at the TOP
-pace_min = min(all_paces) * 0.95 if all_paces else 0
-pace_max = max(all_paces) * 1.05 if all_paces else 600
+pace_min = float(min(all_paces) * 0.95) if all_paces else 0.0
+pace_max = float(max(all_paces) * 1.05) if all_paces else 600.0
 
 # Custom tick labels converting seconds/mile → "M:SS" strings
-tick_vals = list(np.linspace(pace_min, pace_max, 6))
+tick_vals = [float(v) for v in np.linspace(pace_min, pace_max, 6)]
 tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
 
 fig.update_layout(
