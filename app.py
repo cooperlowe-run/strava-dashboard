@@ -2,8 +2,9 @@ import streamlit as st
 import requests
 import json
 import os
+import csv
+import io
 import plotly.graph_objects as go
-from datetime import datetime
 from collections import defaultdict
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -17,6 +18,13 @@ CLIENT_SECRET = st.secrets.get("STRAVA_CLIENT_SECRET", "")
 REDIRECT_URI  = st.secrets.get("REDIRECT_URI", "http://localhost:8501")
 
 RACES_FILE = "races.json"
+
+SPORT_COLORS = {
+    "XC":    "#2e7d32",   # green
+    "Track": "#1565c0",   # blue
+    "Road":  "#6a1b9a",   # purple
+    "Other": "#555555",
+}
 
 def load_races():
     if os.path.exists(RACES_FILE):
@@ -65,12 +73,11 @@ def aggregate_monthly(activities):
     monthly = defaultdict(float)
     for act in activities:
         if act.get("type") in ("Run", "VirtualRun"):
-            month = act["start_date"][:7]           # "2024-03"
-            monthly[month] += act["distance"] / 1609.34  # metres → miles
+            month = act["start_date"][:7]
+            monthly[month] += act["distance"] / 1609.34
     return dict(sorted(monthly.items()))
 
 def pace_seconds_to_str(total_seconds, distance_miles):
-    """Convert finish time (seconds) to min/mile pace string."""
     if distance_miles <= 0:
         return "—"
     pace = total_seconds / distance_miles
@@ -78,7 +85,6 @@ def pace_seconds_to_str(total_seconds, distance_miles):
     return f"{mins}:{secs:02d}/mi"
 
 def time_str_to_seconds(t):
-    """Accept H:MM:SS or M:SS and return total seconds."""
     parts = t.strip().split(":")
     parts = [int(p) for p in parts]
     if len(parts) == 3:
@@ -86,6 +92,51 @@ def time_str_to_seconds(t):
     if len(parts) == 2:
         return parts[0] * 60 + parts[1]
     return int(parts[0])
+
+def parse_csv_races(file_bytes):
+    """
+    Parse an Athletic.net CSV export or our own template.
+    Expected columns (case-insensitive):
+      name, date, distance, time, sport
+    Returns a list of race dicts. Skips rows it can't parse.
+    """
+    text    = file_bytes.decode("utf-8-sig")
+    reader  = csv.DictReader(io.StringIO(text))
+    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+
+    imported, errors = [], []
+    for i, row in enumerate(reader, start=2):
+        row = {k.strip().lower(): v.strip() for k, v in row.items()}
+        try:
+            name     = row.get("name", "").strip()
+            date     = row.get("date", "").strip()
+            dist_raw = row.get("distance", "0").strip()
+            time_raw = row.get("time", "").strip()
+            sport    = row.get("sport", "Road").strip().title()
+
+            if not name or not date or not time_raw:
+                continue
+
+            # Normalise distance: strip units like "mi", "km", "m"
+            dist_str = dist_raw.lower().replace("mi","").replace("km","").replace("m","").strip()
+            distance = float(dist_str) if dist_str else 0.0
+
+            secs = time_str_to_seconds(time_raw)
+            if sport not in SPORT_COLORS:
+                sport = "Other"
+
+            imported.append({
+                "name":     name,
+                "date":     date,
+                "distance": distance,
+                "seconds":  secs,
+                "time_str": time_raw,
+                "sport":    sport,
+            })
+        except Exception as e:
+            errors.append(f"Row {i}: {e}")
+
+    return imported, errors
 
 # ── Auth flow ─────────────────────────────────────────────────────────────────
 params = st.query_params
@@ -118,26 +169,27 @@ if not monthly:
     st.warning("No running activities found on your Strava account.")
     st.stop()
 
-months  = list(monthly.keys())
-mileage = list(monthly.values())
-
-# ── Sidebar: date range filter ────────────────────────────────────────────────
+# ── Sidebar: filters ──────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
-all_years = sorted({m[:4] for m in months})
+all_years = sorted({m[:4] for m in monthly.keys()})
 selected_years = st.sidebar.multiselect("Year(s)", all_years, default=all_years)
+
+sport_options  = list(SPORT_COLORS.keys())
+selected_sports = st.sidebar.multiselect("Sport", sport_options, default=sport_options)
 
 filtered = {m: v for m, v in monthly.items() if m[:4] in selected_years}
 months   = list(filtered.keys())
 mileage  = list(filtered.values())
 
-# ── Race log ──────────────────────────────────────────────────────────────────
+# ── Sidebar: manual race entry ────────────────────────────────────────────────
 st.sidebar.header("Log a race")
 with st.sidebar.form("race_form"):
-    race_name = st.text_input("Race name", placeholder="Boston Marathon")
-    race_date = st.date_input("Date")
-    race_dist = st.number_input("Distance (miles)", min_value=0.1, value=26.2, step=0.1)
-    race_time = st.text_input("Finish time", placeholder="3:45:00  or  22:30")
-    submitted = st.form_submit_button("Add race")
+    race_name  = st.text_input("Race name", placeholder="State 5K")
+    race_date  = st.date_input("Date")
+    race_dist  = st.number_input("Distance (miles)", min_value=0.1, value=3.1, step=0.1)
+    race_time  = st.text_input("Finish time", placeholder="18:45  or  1:02:30")
+    race_sport = st.selectbox("Sport", sport_options)
+    submitted  = st.form_submit_button("Add race")
 
 races = load_races()
 if submitted and race_name and race_time:
@@ -149,11 +201,38 @@ if submitted and race_name and race_time:
             "distance": race_dist,
             "seconds":  secs,
             "time_str": race_time,
+            "sport":    race_sport,
         })
         save_races(races)
         st.sidebar.success(f"Added {race_name}!")
     except Exception:
         st.sidebar.error("Couldn't parse that time. Use H:MM:SS or M:SS.")
+
+# ── Sidebar: CSV import ───────────────────────────────────────────────────────
+st.sidebar.header("Import races from CSV")
+
+# Download template button
+template_csv = "name,date,distance,time,sport\nState Cross Country Meet,2023-11-04,3.1,18:45,XC\nMile Run,2024-04-20,1.0,4:32,Track\n"
+st.sidebar.download_button(
+    "⬇️ Download CSV template",
+    data=template_csv,
+    file_name="races_template.csv",
+    mime="text/csv",
+)
+
+uploaded = st.sidebar.file_uploader("Upload races CSV", type="csv")
+if uploaded:
+    imported, errors = parse_csv_races(uploaded.read())
+    if imported:
+        existing_keys = {(r["name"], r["date"]) for r in races}
+        new_races = [r for r in imported if (r["name"], r["date"]) not in existing_keys]
+        races.extend(new_races)
+        save_races(races)
+        st.sidebar.success(f"Imported {len(new_races)} race(s) ({len(imported)-len(new_races)} duplicates skipped).")
+    if errors:
+        st.sidebar.warning(f"{len(errors)} row(s) skipped — check format.")
+    if not imported and not errors:
+        st.sidebar.warning("No valid rows found in the CSV.")
 
 # ── Main chart ────────────────────────────────────────────────────────────────
 fig = go.Figure()
@@ -163,43 +242,40 @@ fig.add_trace(go.Bar(
     x=months,
     y=mileage,
     name="Monthly miles",
-    marker_color="rgba(252, 82, 0, 0.75)",   # Strava orange
+    marker_color="rgba(252, 82, 0, 0.75)",
     hovertemplate="%{x}<br>%{y:.1f} miles<extra></extra>",
 ))
 
-# 3-month rolling average
-if len(mileage) >= 3:
-    rolling = []
-    for i in range(len(mileage)):
-        window = mileage[max(0, i-2):i+1]
-        rolling.append(sum(window) / len(window))
-    fig.add_trace(go.Scatter(
-        x=months,
-        y=rolling,
-        name="3-mo avg",
-        mode="lines",
-        line=dict(color="rgba(252, 82, 0, 0.4)", width=2, dash="dot"),
-        hovertemplate="%{x}<br>avg: %{y:.1f} mi<extra></extra>",
-    ))
-
-# Race markers overlaid
+# Race markers — one trace per sport so legend groups them
+races_by_sport = defaultdict(list)
 for race in races:
+    sport = race.get("sport", "Other")
+    if sport not in SPORT_COLORS:
+        sport = "Other"
+    if sport not in selected_sports:
+        continue
     month = race["date"][:7]
     if month not in filtered:
         continue
-    pace = pace_seconds_to_str(race["seconds"], race["distance"])
+    races_by_sport[sport].append(race)
+
+for sport, sport_races in races_by_sport.items():
+    color = SPORT_COLORS[sport]
     fig.add_trace(go.Scatter(
-        x=[month],
-        y=[filtered.get(month, 0)],
+        x=[r["date"][:7] for r in sport_races],
+        y=[filtered.get(r["date"][:7], 0) for r in sport_races],
         mode="markers+text",
-        marker=dict(size=14, color="#1a1a2e", symbol="star"),
-        text=[race["name"]],
+        marker=dict(size=14, color=color, symbol="star"),
+        text=[r["name"] for r in sport_races],
         textposition="top center",
-        name=race["name"],
+        name=sport,
+        customdata=[[r["distance"], r["time_str"],
+                     pace_seconds_to_str(r["seconds"], r["distance"])]
+                    for r in sport_races],
         hovertemplate=(
-            f"<b>{race['name']}</b><br>"
-            f"{race['distance']} mi · {race['time_str']}<br>"
-            f"Pace: {pace}<extra></extra>"
+            "<b>%{text}</b><br>"
+            "%{customdata[0]} mi · %{customdata[1]}<br>"
+            "Pace: %{customdata[2]}<extra></extra>"
         ),
     ))
 
@@ -219,32 +295,34 @@ fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
 st.plotly_chart(fig, use_container_width=True)
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
+visible_races = [
+    r for r in races
+    if r["date"][:4] in selected_years
+    and r.get("sport", "Other") in selected_sports
+]
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total miles", f"{sum(mileage):,.0f}")
-col2.metric("Avg miles/month", f"{sum(mileage)/len(mileage):.1f}" if mileage else "—")
-col3.metric("Peak month", f"{max(mileage):.1f} mi" if mileage else "—")
-col4.metric("Races logged", len([r for r in races if r["date"][:4] in selected_years]))
+col1.metric("Total miles",      f"{sum(mileage):,.0f}")
+col2.metric("Avg miles/month",  f"{sum(mileage)/len(mileage):.1f}" if mileage else "—")
+col3.metric("Peak month",       f"{max(mileage):.1f} mi" if mileage else "—")
+col4.metric("Races logged",     len(visible_races))
 
 # ── Race history table ────────────────────────────────────────────────────────
-if races:
+if visible_races:
     st.subheader("Race history")
     race_rows = []
-    for r in sorted(races, key=lambda x: x["date"], reverse=True):
-        if r["date"][:4] not in selected_years:
-            continue
+    for r in sorted(visible_races, key=lambda x: x["date"], reverse=True):
         pace = pace_seconds_to_str(r["seconds"], r["distance"])
         race_rows.append({
             "Race":     r["name"],
             "Date":     r["date"],
+            "Sport":    r.get("sport", "—"),
             "Distance": f"{r['distance']} mi",
             "Time":     r["time_str"],
             "Pace":     pace,
         })
-    if race_rows:
-        st.dataframe(race_rows, use_container_width=True, hide_index=True)
+    st.dataframe(race_rows, use_container_width=True, hide_index=True)
 
 # ── Refresh button ────────────────────────────────────────────────────────────
 if st.button("🔄 Refresh Strava data"):
     del st.session_state["activities"]
     st.rerun()
-
