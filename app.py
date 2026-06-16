@@ -4,7 +4,6 @@ import json
 import os
 import csv
 import io
-import numpy as np
 import plotly.graph_objects as go
 from collections import defaultdict
 
@@ -257,28 +256,26 @@ for sport, sport_races in races_by_sport.items():
     ))
 
 # Pace axis: faster (lower seconds) should appear at the TOP
-pace_min = float(min(all_paces) * 0.95) if all_paces else 0.0
-pace_max = float(max(all_paces) * 1.05) if all_paces else 600.0
+pace_min = (min(all_paces) * 0.95) if all_paces else 0.0
+pace_max = (max(all_paces) * 1.05) if all_paces else 600.0
 
-# Custom tick labels converting seconds/mile → "M:SS" strings
-tick_vals = [float(v) for v in np.linspace(pace_min, pace_max, 6)]
+# Build 6 evenly spaced tick values using plain Python (no numpy)
+step = (pace_max - pace_min) / 5
+tick_vals = [pace_min + step * i for i in range(6)]
 tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
 
 fig.update_layout(
-    xaxis=dict(title="Date", showgrid=False),
-    yaxis=dict(
-        title="Miles",
-        titlefont=dict(color="rgba(252, 82, 0, 0.9)"),
-        tickfont=dict(color="rgba(252, 82, 0, 0.9)"),
-        gridcolor="rgba(128,128,128,0.15)",
-    ),
+    xaxis_title="Date",
+    xaxis_showgrid=False,
+    yaxis_title="Miles",
+    yaxis_gridcolor="rgba(128,128,128,0.15)",
+    yaxis_titlefont_color="rgba(252, 82, 0, 0.9)",
+    yaxis_tickfont_color="rgba(252, 82, 0, 0.9)",
     yaxis2=dict(
         title="Pace (min/mile)",
-        titlefont=dict(color="#444"),
-        tickfont=dict(color="#444"),
         overlaying="y",
         side="right",
-        range=[pace_max, pace_min],   # inverted: faster pace at top
+        autorange="reversed",
         tickvals=tick_vals,
         ticktext=tick_text,
         showgrid=False,
