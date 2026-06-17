@@ -296,9 +296,12 @@ for (bucket, sport), group_races in sorted(grouped.items()):
     seen_distances.add(bucket)
     seen_sports.add(sport)
 
+    # Use NEGATIVE pace so faster (smaller) values appear LOWER on chart naturally
+    neg_pace = [-p for p in pace_seconds]
+
     fig.add_trace(go.Scatter(
         x=[r["date"] for r in group_races],
-        y=pace_seconds,
+        y=neg_pace,
         mode="markers",
         marker=dict(
             size=13,
@@ -323,12 +326,14 @@ for (bucket, sport), group_races in sorted(grouped.items()):
         ),
     ))
 
-# Pace axis range — slow at top, fast at bottom
+# Pace axis — using negated values so faster pace is naturally lower
+# Ticks use negative values but display as readable pace strings
 pace_min = (min(all_paces) * 0.95) if all_paces else 0.0
 pace_max = (max(all_paces) * 1.05) if all_paces else 600.0
 step = (pace_max - pace_min) / 5
-tick_vals = [pace_min + step * i for i in range(6)]   # slow → fast top to bottom
-tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
+# tick_vals are negative; tick_text shows the real pace
+tick_vals = [-(pace_min + step * i) for i in range(6)]  # e.g. -323 to -399
+tick_text = [pace_seconds_to_str(int(-v), 1) for v in tick_vals]
 
 fig.update_layout(
     xaxis=dict(title="Date", showgrid=False),
@@ -342,7 +347,6 @@ fig.update_layout(
         overlaying="y",
         side="right",
         showgrid=False,
-        autorange="reversed",
         tickvals=tick_vals,
         ticktext=tick_text,
     ),
@@ -354,7 +358,7 @@ fig.update_layout(
     height=500,
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True, key="main_chart")
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
 visible_races = [
