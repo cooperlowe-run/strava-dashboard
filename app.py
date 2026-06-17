@@ -323,12 +323,11 @@ for (bucket, sport), group_races in sorted(grouped.items()):
         ),
     ))
 
-# Pace axis range
+# Pace axis range — slow at top, fast at bottom
 pace_min = (min(all_paces) * 0.95) if all_paces else 0.0
 pace_max = (max(all_paces) * 1.05) if all_paces else 600.0
 step = (pace_max - pace_min) / 5
-# Ticks go from fast (low) to slow (high) — axis is displayed slow-at-top, fast-at-bottom
-tick_vals = [pace_min + step * i for i in range(6)]
+tick_vals = [pace_max - step * i for i in range(6)]   # slow → fast top to bottom
 tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
 
 fig.update_layout(
@@ -342,11 +341,7 @@ fig.update_layout(
         title=dict(text="Pace (min/mile)"),
         overlaying="y",
         side="right",
-        range=[pace_max, pace_min],
-        tickvals=tick_vals,
-        ticktext=tick_text,
         showgrid=False,
-        autorange=False,
     ),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     plot_bgcolor="rgba(0,0,0,0)",
@@ -355,6 +350,16 @@ fig.update_layout(
     margin=dict(t=40, b=40),
     height=500,
 )
+
+# Set pace axis range separately — this is more reliable than inside update_layout
+fig.update_yaxes(
+    selector=dict(overlaying="y"),
+    range=[pace_max, pace_min],
+    tickvals=tick_vals,
+    ticktext=tick_text,
+    autorange=False,
+)
+
 st.plotly_chart(fig, use_container_width=True)
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
