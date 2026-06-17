@@ -203,6 +203,36 @@ if uploaded:
     if errors:
         st.sidebar.warning(f"{len(errors)} row(s) skipped — check format.")
 
+# ── Color by distance, shape by sport ────────────────────────────────────────
+# Round distance to nearest standard event for bucketing
+def distance_bucket(d):
+    if d <= 0.26:   return "0.25 mi (400m)"
+    elif d <= 0.6:  return "0.5 mi (800m)"
+    elif d <= 1.1:  return "1 mi (1600m)"
+    elif d <= 2.1:  return "2 mi (3200m)"
+    elif d <= 3.2:  return "5K / XC"
+    elif d <= 6.3:  return "10K"
+    elif d <= 13.2: return "Half Marathon"
+    else:           return "Marathon+"
+
+DISTANCE_COLORS = {
+    "0.25 mi (400m)":  "#e53935",   # red
+    "0.5 mi (800m)":   "#fb8c00",   # orange
+    "1 mi (1600m)":    "#fdd835",   # yellow
+    "2 mi (3200m)":    "#43a047",   # green
+    "5K / XC":         "#00acc1",   # teal
+    "10K":             "#1e88e5",   # blue
+    "Half Marathon":   "#8e24aa",   # purple
+    "Marathon+":       "#6d4c41",   # brown
+}
+
+SPORT_SHAPES = {
+    "Track": "circle",
+    "XC":    "diamond",
+    "Road":  "square",
+    "Other": "cross",
+}
+
 # ── Main chart ────────────────────────────────────────────────────────────────
 fig = go.Figure()
 
@@ -214,52 +244,68 @@ fig.add_trace(go.Bar(
     hovertemplate="%{x}<br>%{y:.1f} miles<extra></extra>",
 ))
 
-# Race stars — x = exact date, y = pace in seconds/mile on right axis
-races_by_sport = defaultdict(list)
+# Build one trace per (distance_bucket, sport) combo so legend is clean
+all_paces = []
+grouped = defaultdict(list)
 for race in races:
     sport = race.get("sport", "Other")
-    if sport not in SPORT_COLORS:
+    if sport not in SPORT_SHAPES:
         sport = "Other"
     if sport not in selected_sports:
         continue
     if race["date"][:7] not in filtered:
         continue
     if race.get("seconds", 0) > 0 and race.get("distance", 0) > 0:
-        races_by_sport[sport].append(race)
+        bucket = distance_bucket(race["distance"])
+        grouped[(bucket, sport)].append(race)
+        all_paces.append(race["seconds"] / race["distance"])
 
-# Collect all pace values to set a sensible y-axis range
-all_paces = []
-for sport_races in races_by_sport.values():
-    for r in sport_races:
-        all_paces.append(r["seconds"] / r["distance"])
+# Track which distance labels we've already added to legend (avoid duplicates)
+seen_distances = set()
+seen_sports = set()
 
-for sport, sport_races in races_by_sport.items():
-    color = SPORT_COLORS[sport]
-    pace_seconds = [r["seconds"] / r["distance"] for r in sport_races]
+for (bucket, sport), group_races in sorted(grouped.items()):
+    color = DISTANCE_COLORS.get(bucket, "#888888")
+    shape = SPORT_SHAPES.get(sport, "circle")
+    pace_seconds = [r["seconds"] / r["distance"] for r in group_races]
+
+    # Show distance in legend only once; show sport in legend only once
+    dist_label  = bucket if bucket not in seen_distances else None
+    sport_label = sport  if sport  not in seen_sports   else None
+    legend_name = f"{bucket} · {sport}"
+    seen_distances.add(bucket)
+    seen_sports.add(sport)
+
     fig.add_trace(go.Scatter(
-        x=[r["date"] for r in sport_races],      # exact date e.g. "2023-11-04"
+        x=[r["date"] for r in group_races],
         y=pace_seconds,
         mode="markers",
-        marker=dict(size=14, color=color, symbol="star"),
-        name=sport,
+        marker=dict(
+            size=13,
+            color=color,
+            symbol=shape,
+            line=dict(width=1, color="rgba(0,0,0,0.3)"),
+        ),
+        name=legend_name,
         yaxis="y2",
-        text=[r["name"] for r in sport_races],
-        customdata=[[r["distance"], r["time_str"],
-                     pace_seconds_to_str(r["seconds"], r["distance"])]
-                    for r in sport_races],
+        text=[r["name"] for r in group_races],
+        customdata=[
+            [r["distance"], r["time_str"],
+             pace_seconds_to_str(r["seconds"], r["distance"]), sport]
+            for r in group_races
+        ],
         hovertemplate=(
             "<b>%{text}</b><br>"
             "Date: %{x}<br>"
             "%{customdata[0]} mi · %{customdata[1]}<br>"
-            "Pace: %{customdata[2]}<extra></extra>"
+            "Pace: %{customdata[2]}<br>"
+            "Sport: %{customdata[3]}<extra></extra>"
         ),
     ))
 
-# Pace axis: faster (lower seconds) should appear at the TOP
+# Pace axis range
 pace_min = (min(all_paces) * 0.95) if all_paces else 0.0
 pace_max = (max(all_paces) * 1.05) if all_paces else 600.0
-
-# Build 6 evenly spaced tick values using plain Python (no numpy)
 step = (pace_max - pace_min) / 5
 tick_vals = [pace_min + step * i for i in range(6)]
 tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
