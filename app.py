@@ -77,6 +77,16 @@ def aggregate_monthly(activities):
             monthly[month] += act["distance"] / 1609.34
     return dict(sorted(monthly.items()))
 
+def aggregate_weekly(activities):
+    from datetime import datetime, timedelta
+    weekly = defaultdict(float)
+    for act in activities:
+        if act.get("type") in ("Run", "VirtualRun"):
+            d = datetime.strptime(act["start_date"][:10], "%Y-%m-%d")
+            week_start = d - timedelta(days=d.weekday())  # Monday of that week
+            weekly[week_start.strftime("%Y-%m-%d")] += act["distance"] / 1609.34
+    return dict(sorted(weekly.items()))
+
 def pace_seconds_to_str(total_seconds, distance_miles):
     if distance_miles <= 0:
         return "—"
@@ -153,12 +163,21 @@ if not monthly:
 
 # ── Sidebar: filters ──────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
-all_years = sorted({m[:4] for m in monthly.keys()})
+view_mode = st.sidebar.radio("View mileage by", ["Monthly", "Weekly"], horizontal=True)
+
+if view_mode == "Weekly":
+    aggregated = aggregate_weekly(activities)
+    bar_label  = "Weekly miles"
+else:
+    aggregated = aggregate_monthly(activities)
+    bar_label  = "Monthly miles"
+
+all_years = sorted({m[:4] for m in aggregated.keys()})
 selected_years  = st.sidebar.multiselect("Year(s)", all_years, default=all_years)
 sport_options   = list(SPORT_COLORS.keys())
 selected_sports = st.sidebar.multiselect("Sport", sport_options, default=sport_options)
 
-filtered = {m: v for m, v in monthly.items() if m[:4] in selected_years}
+filtered = {m: v for m, v in aggregated.items() if m[:4] in selected_years}
 months   = list(filtered.keys())
 mileage  = list(filtered.values())
 
@@ -238,7 +257,7 @@ fig = go.Figure()
 
 # Mileage bars on primary y-axis
 fig.add_trace(go.Bar(
-    x=months, y=mileage, name="Monthly miles",
+    x=months, y=mileage, name=bar_label,
     marker_color="rgba(252, 82, 0, 0.75)",
     yaxis="y1",
     hovertemplate="%{x}<br>%{y:.1f} miles<extra></extra>",
@@ -253,7 +272,8 @@ for race in races:
         sport = "Other"
     if sport not in selected_sports:
         continue
-    if race["date"][:7] not in filtered:
+    race_month = race["date"][:7]
+    if not any(k.startswith(race_month) or k[:7] == race_month for k in filtered):
         continue
     if race.get("seconds", 0) > 0 and race.get("distance", 0) > 0:
         bucket = distance_bucket(race["distance"])
