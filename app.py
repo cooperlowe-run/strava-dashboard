@@ -323,12 +323,6 @@ for (bucket, sport), group_races in sorted(grouped.items()):
         ),
     ))
 
-pace_min = (min(all_paces) * 0.95) if all_paces else 0.0
-pace_max = (max(all_paces) * 1.05) if all_paces else 600.0
-step = (pace_max - pace_min) / 5
-tick_vals = [pace_min + step * i for i in range(6)]
-tick_text = [pace_seconds_to_str(int(v), 1) for v in tick_vals]
-
 fig.update_layout(
     xaxis=dict(title="Date", showgrid=False),
     yaxis=dict(
@@ -337,12 +331,10 @@ fig.update_layout(
         gridcolor="rgba(128,128,128,0.15)",
     ),
     yaxis2=dict(
-        title=dict(text="Pace (min/mile) — faster at bottom"),
+        title=dict(text="Pace (sec/mile) — faster at bottom"),
         overlaying="y",
         side="right",
         showgrid=False,
-        tickvals=tick_vals,
-        ticktext=tick_text,
         autorange="reversed",
     ),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
