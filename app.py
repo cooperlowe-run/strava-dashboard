@@ -341,7 +341,7 @@ fig.update_layout(
         title=dict(text="Pace (min/mile)"),
         overlaying="y",
         side="right",
-        autorange="reversed",
+        range=[pace_max, pace_min],
         tickvals=tick_vals,
         ticktext=tick_text,
         showgrid=False,
